@@ -1,0 +1,523 @@
+---
+title: "Bolsos de lujo de segunda mano: una muestra estratificada y un experimento sobre el diseño muestral"
+subtitle: "Modalidad conjunta: Diseño de Experimentos + Muestreo Estadístico · Corte III · Universidad El Bosque"
+author: "Karol Ximena Salcedo Ponguta y Mariana Lizarazo Buitrago"
+date: "Noviembre de 2026"
+output:
+  html_document:
+    toc: true
+    toc_depth: 2
+    number_sections: true
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE, fig.align = "center")
+library(survey)
+
+marco   <- read.csv("datos/marco.csv", fileEncoding = "UTF-8")
+archivo <- read.csv("datos/archivo-limpio.csv", fileEncoding = "UTF-8")
+piloto  <- read.csv("datos/piloto.csv", fileEncoding = "UTF-8")
+muestra <- read.csv("datos/muestra.csv", fileEncoding = "UTF-8")
+datos   <- read.csv("datos/datos.csv")
+
+estratos <- c("CH", "HE", "LV")
+nombres  <- c(CH = "Chanel", HE = "Hermès", LV = "Louis Vuitton")
+n_h <- c(CH = 34, HE = 89, LV = 27)
+N_h <- as.numeric(table(marco$estrato)[estratos]); names(N_h) <- estratos
+N   <- sum(N_h)
+n   <- sum(n_h)
+z   <- qnorm(0.975)
+
+d <- merge(datos, muestra[, c("id", "N_h", "n_h", "pi_k", "peso")], by = "id")
+d$estrato <- factor(d$estrato, levels = estratos)
+
+f0 <- function(x, k = 0) formatC(x, format = "f", digits = k, big.mark = ".", decimal.mark = ",")
+pc <- function(x, k = 1) paste0(f0(100 * x, k), " %")
+```
+
+
+# Resumen
+
+```{r estimaciones-principales}
+dis <- svydesign(ids = ~1, strata = ~estrato, weights = ~peso, fpc = ~N_h, data = d)
+e_precio  <- svymean(~precio, dis, deff = TRUE)
+deff_precio <- as.numeric(deff(e_precio))
+e_agotado <- svymean(~agotado, dis, deff = TRUE)
+deff_agotado <- as.numeric(deff(e_agotado))
+ic_precio  <- confint(e_precio)
+ic_agotado <- confint(e_agotado)
+
+tasa_h <- tapply(d$respondio, d$estrato, mean)
+d$peso_aj <- ifelse(d$respondio, d$peso / tasa_h[as.character(d$estrato)], 0)
+resp  <- d[d$respondio, ]
+dis_r <- svydesign(ids = ~1, strata = ~estrato, weights = ~peso_aj, fpc = ~N_h, data = resp)
+e_razon  <- svymean(~conserva, dis_r)
+ic_razon <- confint(e_razon)
+```
+
+```{r experimento-resumen, include = FALSE}
+ex0 <- read.csv("datos/experimento.csv")
+ex0$diseno <- factor(ex0$diseno, levels = c("mas", "estratificado"))
+ex0$tamano <- factor(ex0$tamano, levels = c(30, 90))
+ex0$bloque <- factor(ex0$bloque)
+tk0 <- TukeyHSD(aov(error_relativo ~ bloque + diseno * tamano, data = ex0), which = c("diseno", "tamano"))
+e30 <- mean(ex0$error_relativo[ex0$tamano == "30"]); e90 <- mean(ex0$error_relativo[ex0$tamano == "90"])
+```
+
+Estudiamos los anuncios de bolsos de Louis Vuitton, Chanel y Hermès en Vestiaire Collective a partir de un archivo público de `r f0(N)` anuncios.
+
+- **Muestreo.** Con una muestra estratificada por marca de `r n` anuncios, estimamos un precio medio de reventa de **£`r f0(coef(e_precio))`** (IC 95 %: £`r f0(ic_precio[1])` a £`r f0(ic_precio[2])`). El `r pc(coef(e_agotado))` de los anuncios está agotado, y un bolso se revende en promedio al `r pc(coef(e_razon), 0)` de su precio en tienda.
+- **Experimento.** En un factorial 2 × 2 con las marcas como bloques y `r nrow(ex0)` corridas, comparamos dos decisiones de diseño muestral. Pasar de 30 a 90 anuncios bajó el error relativo de la media de `r f0(e30, 1)` % a `r f0(e90, 1)` %. Estratificar dentro de cada marca por estado de conservación `r ifelse(tk0$diseno[1, "diff"] < 0, "lo bajó", "lo subió")` en apenas `r f0(abs(tk0$diseno[1, "diff"]), 2)` puntos porcentuales.
+- **Conclusión.** La marca separa mucho el precio y estratificar por ella rinde. El estado de conservación separa poco y estratificar por él casi no rinde.
+
+# La pregunta, la población y el marco
+
+**Pregunta de Muestreo (Parte A).** ¿Cuál es el precio medio de reventa de los bolsos de Louis Vuitton, Chanel y Hermès anunciados en Vestiaire Collective, qué proporción de los anuncios aparece agotada y qué parte de su precio en tienda conservan, y cómo varía esto entre las tres marcas?
+
+**Pregunta de Diseño (Parte B).** Dentro de cada marca, ¿cuánto mejora la estimación del precio medio si se estratifica por estado de conservación, y cuánto si se triplica el tamaño de muestra?
+
+**Población objetivo.** Los anuncios de bolsos de segunda mano de esas tres marcas publicados en Vestiaire Collective cuando se recogió el archivo, cuya versión publicada es de mayo de 2021. No es el mercado de hoy ni el de otras plataformas.
+
+**Marco.** El archivo público `Part_2/preview.csv` del repositorio [Ketevana/Data-Science-Capstone-Project](https://github.com/Ketevana/Data-Science-Capstone-Project), en la versión `b567eb7`. Tiene 12.916 anuncios obtenidos por web scraping. `R/00-marco.R` lo depura y deja `r f0(N)` anuncios, cada uno con un identificador y su estrato:
+
+```{r tabla-marco}
+knitr::kable(data.frame(Paso = c("Archivo original", "Sin marca", "Sin duplicados", "Sin estado «Vintage»"),
+                        Anuncios = f0(c(12916, 12308, 11990, 11988))),
+             caption = "Construcción del marco.")
+```
+
+**Cobertura.** Quedan fuera dos grupos:
+
+- 608 anuncios sin marca, que no se pueden asignar a un estrato;
+- los anuncios que el scraping no recogió, cuyo número no conocemos.
+
+Si esos anuncios son de modelos menos buscados y más baratos, el marco sobrerrepresenta los bolsos caros y el precio medio queda **sobreestimado** frente a la población objetivo. Los duplicados y los dos anuncios «Vintage» no cambian la población: los primeros se cuentan una sola vez y los segundos son casos aislados.
+
+# Parte A · La muestra concreta (Muestreo)
+
+## El diseño y por qué ese
+
+**Diseño.** Muestreo estratificado por marca, con muestreo aleatorio simple sin reemplazo dentro de cada estrato y asignación de Neyman ($n_h \propto N_h S_h$). La marca está en el marco y separa mucho el precio, así que estratificar por ella quita de la varianza la diferencia entre marcas. La de Neyman pone más muestra donde el precio varía más.
+
+**Comparación con las alternativas.** El margen esperado al 95 % del precio medio con $n = 150$ es:
+
+$$e = z\sqrt{\sum_h W_h^2 \left(1-\tfrac{n_h}{N_h}\right)\frac{S_h^2}{n_h}}$$
+
+y, con aleatorio simple, $z\sqrt{(1 - n/N)S^2/n}$. Se calculó con las desviaciones del piloto, que fue lo único que conocíamos al escribir el protocolo. Como el marco es el archivo completo, abajo se recalcula también con las desviaciones reales:
+
+```{r comparacion-disenos}
+S_pil <- tapply(piloto$precio, piloto$estrato, sd)[estratos]
+m_pil <- tapply(piloto$precio, piloto$estrato, mean)[estratos]
+S_real <- tapply(archivo$precio, archivo$estrato, sd)[estratos]
+W <- N_h / N
+margen_estr <- function(S, nh) z * sqrt(sum(W^2 * (1 - nh / N_h) * S^2 / nh))
+S2_mas_pil <- sum(W * S_pil^2) + sum(W * (m_pil - sum(W * m_pil))^2)
+margen_mas <- function(S2) z * sqrt((1 - n / N) * S2 / n)
+prop <- n * W
+ney  <- n_h
+tab <- data.frame(
+  Diseño = c("Aleatorio simple", "Estratificado proporcional", "Estratificado de Neyman (34/89/27)"),
+  `Margen con el piloto (£)` = f0(c(margen_mas(S2_mas_pil), margen_estr(S_pil, prop), margen_estr(S_pil, ney))),
+  `Margen con las S reales (£)` = f0(c(margen_mas(var(archivo$precio)), margen_estr(S_real, prop), margen_estr(S_real, ney))),
+  check.names = FALSE)
+knitr::kable(tab, caption = "Margen de error esperado al 95 % para el precio medio, con n = 150.")
+ney_real <- n * N_h * S_real / sum(N_h * S_real)
+```
+
+Con el piloto, el estratificado de Neyman prometía un margen casi tres veces menor que el aleatorio simple, y por eso se eligió. Con las desviaciones reales la ventaja se mantiene: £`r f0(margen_estr(S_real, ney))` frente a £`r f0(margen_mas(var(archivo$precio)))`. Esa es la ganancia de estratificar.
+
+Lo que no se cumplió fue el nivel: el piloto subestimó la desviación del precio en las tres marcas, sobre todo en Hermès (`r f0(S_pil["HE"])` frente a `r f0(S_real["HE"])` real). Con las desviaciones reales, la asignación de Neyman óptima habría sido de `r paste(round(ney_real), collapse = " / ")` anuncios. Es decir, aún más muestra en Hermès. Diez anuncios por estrato no bastan para estimar bien una desviación cuando hay pocos bolsos muy caros (pieles exóticas, ediciones limitadas). Con un piloto más grande habríamos elegido un tamaño mayor.
+
+## Probabilidades de inclusión, selección y comprobación
+
+Cada anuncio $k$ del estrato $h$ entra con probabilidad $\pi_k = n_h/N_h$ y su peso es $w_k = 1/\pi_k$:
+
+```{r tabla-pik}
+knitr::kable(data.frame(Estrato = nombres[estratos], N_h = f0(N_h), n_h = n_h,
+                        pi_k = formatC(n_h / N_h, format = "f", digits = 5, decimal.mark = ","),
+                        Peso = f0(N_h / n_h, 2)),
+             caption = "Probabilidades de inclusión y pesos.", row.names = FALSE)
+```
+
+`R/seleccion.R` ordena los anuncios de cada estrato por un número uniforme aleatorio y toma los primeros $n_h$, con la semilla 20261113. Lo escribe en `datos/muestra.csv`, donde los pesos suman `r f0(sum(muestra$peso))`. Para comprobar el guion, se repitió la selección 2.000 veces y se contó cuántas veces salió cada anuncio:
+
+```{r comprobacion}
+seleccionar <- function(marco) {
+  m <- NULL
+  for (h in estratos) {
+    dh <- marco[marco$estrato == h, ]
+    m <- rbind(m, dh[order(runif(nrow(dh)))[1:n_h[h]], ])
+  }
+  m
+}
+set.seed(31)
+R <- 2000
+veces <- integer(nrow(marco)); names(veces) <- marco$id
+for (r in seq_len(R)) {
+  s <- seleccionar(marco)$id
+  veces[s] <- veces[s] + 1
+}
+pi_marco <- as.numeric(n_h[marco$estrato] / N_h[marco$estrato])
+frec  <- veces / R
+fuera <- abs(frec - pi_marco) > 3 * sqrt(pi_marco * (1 - pi_marco) / R)
+```
+
+```{r tabla-comprobacion}
+knitr::kable(data.frame(Estrato = nombres[estratos],
+                        `pi_k del protocolo` = formatC(n_h / N_h, format = "f", digits = 5, decimal.mark = ","),
+                        `Frecuencia media` = formatC(tapply(frec, marco$estrato, mean)[estratos], format = "f", digits = 5, decimal.mark = ","),
+                        check.names = FALSE),
+             caption = "Frecuencia de selección en 2.000 repeticiones.", row.names = FALSE)
+```
+
+`r sum(fuera)` de los `r f0(N)` anuncios (`r pc(mean(fuera), 2)`) se alejan de su $\pi_k$ más de tres errores estándar de Monte Carlo. Por azar se esperaría alrededor del 0,3 %. Ningún anuncio salió en todas las repeticiones (`r sum(veces == R)`). Los que no salieron en ninguna fueron `r sum(veces == 0)`, una cantidad compatible con el azar en Louis Vuitton, donde $\pi_k$ es la más pequeña. El guion sortea con las probabilidades del protocolo.
+
+## Datos y no respuesta
+
+El marco es un archivo público: no hubo contacto con personas. El «campo» fue tomar del archivo los datos de cada anuncio seleccionado (`R/datos.R`). El precio de reventa y el estado de agotado están completos. El precio en tienda falta en algunos anuncios: esa es la no respuesta.
+
+```{r tabla-respuesta}
+tr <- data.frame(Estrato = nombres[estratos],
+                 Seleccionados = as.numeric(table(d$estrato)),
+                 Respondieron = as.numeric(tapply(d$respondio, d$estrato, sum)))
+tr$Tasa <- pc(tr$Respondieron / tr$Seleccionados)
+tr <- rbind(tr, data.frame(Estrato = "Total", Seleccionados = nrow(d), Respondieron = sum(d$respondio),
+                           Tasa = pc(mean(d$respondio))))
+knitr::kable(tr, caption = "Tasa de respuesta por estrato.", row.names = FALSE)
+```
+
+Los dos anuncios sin precio en tienda son de Louis Vuitton (`r paste(d$id[!d$respondio], collapse = " y ")`). No se sustituyeron por otros. Entran en la estimación del precio y de la proporción de agotados, y solo se excluyen de la razón entre precios. Para la razón, los pesos de los respondientes se ajustan dentro de cada estrato: $w_k^{aj} = w_k / \hat r_h$, donde $\hat r_h$ es la tasa de respuesta del estrato. El supuesto es que, dentro de cada marca, que falte el precio en tienda no depende de cuánto valor conserva el bolso.
+
+## Estimación
+
+Todas las estimaciones usan el diseño declarado en `survey`, con estratos, pesos y corrección por población finita (`R/estimacion.R`).
+
+```{r tabla-estimaciones}
+fila <- function(nombre, e, ic, deff_v = NA, k = 0, porcentaje = FALSE) {
+  fm <- if (porcentaje) function(x) pc(x, 1) else function(x) f0(x, k)
+  data.frame(Parámetro = nombre, Estimación = fm(as.numeric(coef(e))), `Error estándar` = fm(as.numeric(SE(e))),
+             `IC 95 %` = paste(fm(ic[1]), "a", fm(ic[2])),
+             `Efecto de diseño` = ifelse(is.na(deff_v), "—", formatC(deff_v, format = "f", digits = 2, decimal.mark = ",")),
+             check.names = FALSE)
+}
+tab_est <- rbind(
+  fila("Precio medio de reventa (£)", e_precio, ic_precio, as.numeric(deff(e_precio))),
+  fila("Proporción de anuncios agotados", e_agotado, ic_agotado, as.numeric(deff(e_agotado)), porcentaje = TRUE),
+  fila("Razón reventa / tienda", e_razon, ic_razon, k = 2))
+knitr::kable(tab_est, caption = "Estimaciones para la población del marco.", row.names = FALSE)
+```
+
+```{r tabla-por-marca}
+por_marca <- function(variable, disenio) {
+  b <- svyby(as.formula(paste0("~", variable)), ~estrato, disenio, svymean)
+  ic <- confint(b)
+  data.frame(estrato = as.character(b$estrato), est = coef(b), se = SE(b), li = ic[, 1], ls = ic[, 2])
+}
+pm_precio <- por_marca("precio", dis)
+pm_agot   <- por_marca("agotado", dis)
+pm_razon  <- por_marca("conserva", dis_r)
+knitr::kable(data.frame(
+  Marca = nombres[pm_precio$estrato],
+  `Precio medio (£)` = paste0(f0(pm_precio$est), " (", f0(pm_precio$li), " a ", f0(pm_precio$ls), ")"),
+  `% agotado` = paste0(pc(pm_agot$est), " (", pc(pm_agot$li), " a ", pc(pm_agot$ls), ")"),
+  `Razón reventa / tienda` = paste0(f0(pm_razon$est, 2), " (", f0(pm_razon$li, 2), " a ", f0(pm_razon$ls, 2), ")"),
+  check.names = FALSE), caption = "Estimaciones por marca, con su IC 95 % entre paréntesis.", row.names = FALSE)
+```
+
+**Verificación por otra vía.** El estimador estratificado y su varianza se calcularon también con la fórmula, sin `survey`:
+
+$$\bar y_{st} = \sum_h W_h \bar y_h, \qquad \hat V(\bar y_{st}) = \sum_h W_h^2\left(1 - \frac{n_h}{N_h}\right)\frac{s_h^2}{n_h}$$
+
+```{r verificacion-formula}
+formula_estr <- function(y, g) {
+  nh <- tapply(y, g, length)[estratos]; yb <- tapply(y, g, mean)[estratos]; s2 <- tapply(y, g, var)[estratos]
+  c(est = sum(W * yb), se = sqrt(sum(W^2 * (1 - nh / N_h) * s2 / nh)))
+}
+v_precio  <- formula_estr(d$precio, d$estrato)
+v_agotado <- formula_estr(d$agotado, d$estrato)
+knitr::kable(data.frame(
+  Parámetro = c("Precio medio (£)", "Proporción agotada"),
+  `survey: estimación` = c(f0(coef(e_precio), 2), formatC(coef(e_agotado), format = "f", digits = 5, decimal.mark = ",")),
+  `Fórmula: estimación` = c(f0(v_precio["est"], 2), formatC(v_agotado["est"], format = "f", digits = 5, decimal.mark = ",")),
+  `survey: error estándar` = c(f0(SE(e_precio), 2), formatC(SE(e_agotado), format = "f", digits = 5, decimal.mark = ",")),
+  `Fórmula: error estándar` = c(f0(v_precio["se"], 2), formatC(v_agotado["se"], format = "f", digits = 5, decimal.mark = ",")),
+  check.names = FALSE), caption = "Mismo resultado por dos vías.", row.names = FALSE)
+```
+
+Las dos vías coinciden.
+
+## Qué dicen las estimaciones
+
+- **Precio.** Con 95 % de confianza, el precio medio de reventa de un bolso de estas tres marcas en el marco está entre £`r f0(ic_precio[1])` y £`r f0(ic_precio[2])`. El promedio esconde marcas muy distintas: un Hermès de segunda mano cuesta en promedio unas `r f0(pm_precio$est[2] / pm_precio$est[1], 1)` veces lo que un Chanel y unas `r f0(pm_precio$est[2] / pm_precio$est[3], 0)` veces lo que un Louis Vuitton.
+- **Efecto de diseño del precio: `r formatC(deff_precio, format = "f", digits = 2, decimal.mark = ",")`.** La varianza del estratificado es una fracción de la de un aleatorio simple del mismo tamaño. Para lograr la misma precisión sin estratificar habrían hecho falta unos `r f0(n / deff_precio)` anuncios en vez de `r n`.
+- **Agotados.** Cerca de la mitad de los anuncios aparece agotada. Por marca, Louis Vuitton tiene la proporción más alta.
+- **Efecto de diseño de la proporción de agotados: `r formatC(deff_agotado, format = "f", digits = 2, decimal.mark = ",")`.** Es mayor que 1: para esta variable el diseño es *menos* preciso que un aleatorio simple. La asignación de Neyman se calculó para el precio y puso 89 de los 150 anuncios en Hermès. Pero las marcas casi no difieren en agotados, y Louis Vuitton, que es casi la mitad del marco, quedó con solo 27 anuncios. Un diseño óptimo para una variable puede no serlo para otra.
+- **Valor que conservan.** En promedio, un bolso se revende por debajo de su precio en tienda, pero Hermès es la excepción: su intervalo está por encima de 1, es decir, un Hermès usado se vende en promedio más caro que nuevo.
+
+## Comprobación contra el valor real
+
+Como el marco es el archivo completo, el parámetro se conoce y se puede ver si cada intervalo lo contiene:
+
+```{r verdad}
+verdad <- c(precio = mean(archivo$precio), agotado = mean(archivo$agotado),
+            conserva = mean(archivo$precio / archivo$precio_tienda, na.rm = TRUE))
+verdad_h <- data.frame(
+  precio   = tapply(archivo$precio, archivo$estrato, mean)[estratos],
+  agotado  = tapply(archivo$agotado, archivo$estrato, mean)[estratos],
+  conserva = tapply(archivo$precio / archivo$precio_tienda, archivo$estrato, mean, na.rm = TRUE)[estratos])
+contiene <- function(li, ls, v) ifelse(li <= v & v <= ls, "Sí", "**No**")
+comp <- data.frame(
+  Parámetro = c("Precio medio (£)", paste("Precio medio,", nombres[estratos]),
+                "Proporción agotada", paste("Agotados,", nombres[estratos]),
+                "Razón reventa / tienda", paste("Razón,", nombres[estratos])),
+  `Valor real` = c(f0(verdad["precio"]), f0(verdad_h$precio), pc(verdad["agotado"]), pc(verdad_h$agotado),
+                   f0(verdad["conserva"], 2), f0(verdad_h$conserva, 2)),
+  `¿El IC lo contiene?` = c(contiene(ic_precio[1], ic_precio[2], verdad["precio"]),
+                            contiene(pm_precio$li, pm_precio$ls, verdad_h$precio),
+                            contiene(ic_agotado[1], ic_agotado[2], verdad["agotado"]),
+                            contiene(pm_agot$li, pm_agot$ls, verdad_h$agotado),
+                            contiene(ic_razon[1], ic_razon[2], verdad["conserva"]),
+                            contiene(pm_razon$li, pm_razon$ls, verdad_h$conserva)),
+  check.names = FALSE)
+knitr::kable(comp, caption = "Intervalos frente al valor real del marco.", row.names = FALSE)
+```
+
+Los intervalos generales contienen el valor real. Los de precio y razón de Louis Vuitton no. Para saber si eso es mala suerte o algo del diseño, se simularon 1.000 muestras con el mismo diseño y se contó cuántas veces el intervalo contiene el valor real:
+
+```{r simulacion-cobertura}
+set.seed(2611)
+R2 <- 1000
+cubre <- matrix(NA, R2, 4, dimnames = list(NULL, c("Total", estratos)))
+for (r in seq_len(R2)) {
+  s <- merge(seleccionar(marco)[, c("id", "estrato")], archivo[, c("id", "precio")], by = "id")
+  nh <- tapply(s$precio, s$estrato, length)[estratos]
+  yb <- tapply(s$precio, s$estrato, mean)[estratos]
+  s2 <- tapply(s$precio, s$estrato, var)[estratos]
+  se_h <- sqrt((1 - nh / N_h) * s2 / nh)
+  est <- sum(W * yb); se <- sqrt(sum(W^2 * se_h^2))
+  cubre[r, ] <- c(abs(est - verdad["precio"]) <= z * se, abs(yb - verdad_h$precio) <= z * se_h)
+}
+cob <- colMeans(cubre)
+```
+
+```{r tabla-cobertura}
+knitr::kable(data.frame(Intervalo = c("Precio medio total", paste("Precio medio,", nombres[estratos])),
+                        `Cobertura simulada` = pc(cob), check.names = FALSE),
+             caption = "Porcentaje de 1.000 muestras en que el IC 95 % contiene el valor real.", row.names = FALSE)
+```
+
+Los intervalos cubren menos del 95 % que prometen, y lo peor es Louis Vuitton (`r pc(cob["LV"])`). La causa es la asimetría del precio. En Louis Vuitton, la mayoría de los bolsos vale entre £490 y £1.040, pero unos pocos modelos (Capucines y algunas ediciones especiales) superan los £10.000. Con 27 anuncios, lo más probable es que la muestra no incluya ninguno de esos bolsos caros. Entonces la media sale baja y la desviación también, y el intervalo queda corto y desplazado hacia abajo. Eso fue lo que pasó en nuestra muestra.
+
+# Parte B · El experimento sobre el diseño muestral (Diseño de Experimentos)
+
+## La pregunta y lo que se midió
+
+En la Parte A, estratificar por marca redujo mucho la varianza. La pregunta del experimento es qué más se puede ganar **dentro** de una marca. ¿Cuánto mejora la estimación del precio medio si se estratifica por estado de conservación en vez de usar un aleatorio simple, y cuánto si se pasa de 30 a 90 anuncios? ¿Depende lo primero de lo segundo? La respuesta importa para planear la próxima muestra: ¿conviene invertir en un marco con el estado de cada anuncio, o en más anuncios?
+
+- **Respuesta:** el error relativo absoluto de la estimación del precio medio, $100\,|\hat{\bar y}-\bar Y|/\bar Y$, en %. Es exacto porque se conoce la media real de cada población.
+- **Unidad experimental y de observación:** la corrida, es decir, una muestra nueva, con su propia semilla, de la población de una marca, que da una estimación.
+
+## El diseño, planeado y corrido
+
+```{r experimento-datos}
+ex <- read.csv("datos/experimento.csv")
+ex$bloque <- factor(ex$bloque, levels = estratos)
+ex$diseno <- factor(ex$diseno, levels = c("mas", "estratificado"))
+ex$tamano <- factor(ex$tamano, levels = c(30, 90))
+corridas_tabla <- read.csv("datos/tabla-corridas.csv")
+```
+
+El diseño es un factorial 2 × 2 en bloques completos al azar:
+
+- **Diseño muestral:** aleatorio simple, o estratificado por estado de conservación en tres grupos, con asignación proporcional.
+- **Tamaño:** 30 o 90 anuncios.
+- **Bloques:** las poblaciones de Chanel, Hermès y Louis Vuitton.
+- **Réplicas:** `r nrow(ex) / 12` réplicas por celda y bloque, es decir, `r nrow(ex)` corridas. Cada réplica es una muestra nueva, no una submuestra de la misma.
+
+`R/tabla-corridas.R` sorteó el orden de las corridas y la semilla de cada una, con la semilla 20261123 del preregistro. Las corridas se ejecutaron en ese orden (`r ifelse(all(ex$orden_real == ex$orden_planeado), "el orden real coincide con el planeado", "hay corridas fuera de orden; ver la bitácora")`). No hubo corridas perdidas. Lo que se apartó del plan está en «Desviaciones».
+
+Por qué este diseño y no uno más simple:
+
+- Con un solo factor no se vería si la ganancia de estratificar cambia con el tamaño.
+- Sin bloques, la diferencia entre marcas quedaría en el error. Los precios de Louis Vuitton y Hermès son más dispersos que los de Chanel, así que su error relativo es mayor por razones ajenas a los factores.
+
+## Análisis confirmatorio
+
+El modelo preregistrado es `error ~ bloque + diseño * tamaño`, con el bloque como factor.
+
+```{r anova}
+mod <- aov(error_relativo ~ bloque + diseno * tamano, data = ex)
+tab <- summary(mod)[[1]]; rownames(tab) <- trimws(rownames(tab))
+
+bc <- MASS::boxcox(lm(error_relativo ~ bloque + diseno * tamano, data = ex),
+                   lambda = seq(-0.5, 1.5, 0.01), plotit = FALSE)
+lambda <- bc$x[which.max(bc$y)]
+potencias <- c(0, 1/3, 1/2, 1)
+lam_r  <- potencias[which.min(abs(potencias - lambda))]
+ex$y_t <- if (lam_r == 0) log(ex$error_relativo) else ex$error_relativo^lam_r
+nombre_t <- c("el logaritmo", "la raíz cúbica", "la raíz cuadrada", "la respuesta sin transformar")[match(lam_r, potencias)]
+mod_t <- aov(y_t ~ bloque + diseno * tamano, data = ex)
+tab_t <- summary(mod_t)[[1]]; rownames(tab_t) <- trimws(rownames(tab_t))
+
+filas <- c("bloque", "diseno", "tamano", "diseno:tamano", "Residuals")
+tabla_anova <- function(tb) data.frame(
+  Fuente = c("Bloque (marca)", "Diseño", "Tamaño", "Diseño × Tamaño", "Error"),
+  gl = tb[filas, "Df"], SC = f0(tb[filas, "Sum Sq"], 2), CM = f0(tb[filas, "Mean Sq"], 2),
+  F = c(f0(tb[filas[1:4], "F value"], 2), ""),
+  p = c(formatC(tb[filas[1:4], "Pr(>F)"], format = "g", digits = 3, decimal.mark = ","), ""))
+p_t <- tab_t[filas[1:4], "Pr(>F)"]; names(p_t) <- filas[1:4]
+sig <- function(p) ifelse(p < 0.05, "es significativo", "no es significativo")
+sig_f <- function(p) ifelse(p < 0.05, "es significativa", "no es significativa")
+```
+
+**Supuestos.** El error absoluto no puede ser negativo y tiene una cola larga, así que los residuos del modelo con la respuesta original se revisaron antes de leer la tabla:
+
+```{r residuos, fig.width = 8, fig.height = 6}
+par(mfrow = c(2, 2), mar = c(4, 4, 2.5, 1))
+plot(fitted(mod), residuals(mod), pch = 16, cex = 0.6, xlab = "Ajustados", ylab = "Residuos",
+     main = "Respuesta original"); abline(h = 0, lty = 2)
+qqnorm(residuals(mod), pch = 16, cex = 0.6, main = "QQ normal, respuesta original"); qqline(residuals(mod))
+plot(fitted(mod_t), residuals(mod_t), pch = 16, cex = 0.6, xlab = "Ajustados", ylab = "Residuos",
+     main = paste("Con", nombre_t)); abline(h = 0, lty = 2)
+qqnorm(residuals(mod_t), pch = 16, cex = 0.6, main = paste("QQ normal, con", nombre_t)); qqline(residuals(mod_t))
+```
+
+Con la respuesta original, los residuos son asimétricos hacia la derecha y su dispersión crece con el valor ajustado. El preregistro fijaba el remedio: Box-Cox. Dio $\lambda =$ `r f0(lambda, 2)`, que se redondea a la potencia más cercana de las preregistradas (0, 1/3, 1/2 o 1), así que el análisis usa **`r nombre_t`** del error. Con esa transformación los residuos quedan aproximadamente simétricos y con dispersión más pareja (fila inferior de los gráficos). La tabla ANOVA con la respuesta transformada es:
+
+```{r tabla-anova}
+knitr::kable(tabla_anova(tab_t), caption = paste0("ANOVA del error relativo, con ", nombre_t, "."), row.names = FALSE)
+```
+
+- **Interacción.** La interacción diseño × tamaño `r sig_f(p_t["diseno:tamano"])` (p = `r formatC(p_t["diseno:tamano"], format = "g", digits = 2, decimal.mark = ",")`). `r ifelse(p_t["diseno:tamano"] < 0.05, "Por eso los efectos principales se leen con cuidado, celda por celda.", "Por eso se pueden leer los efectos principales por separado.")`
+- **Tamaño.** El efecto del tamaño `r sig(p_t["tamano"])` (p = `r formatC(p_t["tamano"], format = "g", digits = 2, decimal.mark = ",")`).
+- **Diseño.** El efecto del diseño `r sig(p_t["diseno"])` (p = `r formatC(p_t["diseno"], format = "g", digits = 2, decimal.mark = ",")`).
+- **Bloque.** El bloque `r sig(p_t["bloque"])`: el error relativo cambia de una marca a otra, y meterlo en el modelo le quitó esa variación al error.
+
+**Tamaño de los efectos, en la escala original.** Las diferencias se estiman con el método de Tukey sobre el modelo con la respuesta original. Con `r nrow(ex) / 2` corridas por nivel, las medias son estables aunque los residuos sean asimétricos.
+
+```{r efectos}
+tk <- TukeyHSD(mod, which = c("diseno", "tamano"))
+d_dis <- tk$diseno["estratificado-mas", ]
+d_tam <- tk$tamano["90-30", ]
+medias <- aggregate(error_relativo ~ diseno + tamano, data = ex,
+                    FUN = function(x) c(media = mean(x), mediana = median(x)))
+medias <- do.call(data.frame, medias)
+knitr::kable(data.frame(Diseño = ifelse(medias$diseno == "mas", "Aleatorio simple", "Estratificado por estado"),
+                        Tamaño = medias$tamano,
+                        `Error medio (%)` = f0(medias$error_relativo.media, 2),
+                        `Error mediano (%)` = f0(medias$error_relativo.mediana, 2), check.names = FALSE),
+             caption = "Error relativo por tratamiento (las tres marcas juntas).", row.names = FALSE)
+m30 <- mean(ex$error_relativo[ex$tamano == "30"]); m90 <- mean(ex$error_relativo[ex$tamano == "90"])
+```
+
+- **Tamaño.** Al pasar de 30 a 90 anuncios, el error relativo medio cambia en `r f0(d_tam["diff"], 2)` puntos porcentuales (IC 95 %: `r f0(d_tam["lwr"], 2)` a `r f0(d_tam["upr"], 2)`). El error con 30 anuncios es `r f0(m30 / m90, 2)` veces el de 90. La teoría predice unas $\sqrt{3}\approx 1{,}73$ veces, porque el error estándar cae con $1/\sqrt{n}$.
+- **Diseño.** La diferencia en el error medio entre estratificar por estado y el aleatorio simple es de `r f0(d_dis["diff"], 2)` puntos porcentuales (IC 95 %: `r f0(d_dis["lwr"], 2)` a `r f0(d_dis["upr"], 2)`). `r ifelse(d_dis["lwr"] < 0 & d_dis["upr"] > 0, "El intervalo incluye el cero: con estas réplicas no se puede descartar que estratificar por estado no cambie nada.", "")` Es una diferencia `r ifelse(abs(d_dis["diff"]) < abs(d_tam["diff"]) / 3, "mucho menor", "menor")` que la del tamaño. Coincide con lo que se esperaba: el estado de conservación explica poco del precio dentro de cada marca. Lo que más explica el precio es el modelo del bolso.
+
+```{r grafico-experimento, fig.width = 8, fig.height = 3.6}
+par(mfrow = c(1, 2), mar = c(4, 4, 2.5, 1))
+interaction.plot(ex$tamano, ex$diseno, ex$error_relativo, xlab = "Tamaño de muestra",
+                 ylab = "Error relativo medio (%)", trace.label = "Diseño", main = "Interacción",
+                 col = c("#2a78d6", "#eb6834"), lwd = 2)
+boxplot(error_relativo ~ diseno + tamano, data = ex, names = c("MAS 30", "Estr. 30", "MAS 90", "Estr. 90"),
+        ylab = "Error relativo (%)", main = "Error por tratamiento", col = c("#cfe0f5", "#f5dccf"))
+```
+
+## Conclusión del experimento
+
+Para estimar el precio medio de reventa dentro de una marca, **el tamaño de muestra importa mucho más que estratificar por estado de conservación**. Triplicar el tamaño reduce el error relativo de forma clara, aunque menos de lo que predice la teoría (`r f0(m30 / m90, 2)` veces frente a 1,73). Una explicación probable es la cola larga de precios: con 30 anuncios casi nunca sale un bolso muy caro, y el error de esas muestras queda más concentrado de lo que supone la fórmula. Estratificar por estado reduce poco la varianza, porque el estado explica poco del precio dentro de cada marca. Si hubiera que elegir, conviene invertir en más anuncios o en estratificar por una variable que explique más el precio, como el modelo del bolso, y no en registrar el estado.
+
+Lo que el experimento **no** permite concluir:
+
+- Los resultados valen para estas tres poblaciones, con estos dos tamaños y este diseño estratificado; no para otras marcas ni para tamaños fuera de 30–90.
+- La respuesta es el error de la media. Para la proporción de agotados u otros parámetros el resultado podría ser distinto.
+
+# Integración de las dos partes
+
+**Qué da cada aleatorización y qué no.**
+
+- **La selección aleatoria de la muestra concreta** (Parte A) da a cada anuncio una probabilidad de inclusión conocida, $\pi_k = n_h/N_h$. Eso permite pasar de la muestra al marco con pesos y medir la incertidumbre con el error estándar. No permite hablar de causas: describe la población.
+- **La aleatorización del experimento** (Parte B) tiene dos partes. El orden de las corridas se sortea, aunque en un computador el orden no introduce deriva. Lo esencial es que cada corrida toma una muestra nueva con su propia semilla. Así, la única diferencia sistemática entre tratamientos es el diseño y el tamaño que se les asignó, y se puede atribuir a ellos la diferencia en el error. No permite generalizar fuera de las tres poblaciones usadas como bloques.
+
+**A qué población se generaliza el efecto.** A las tres poblaciones de anuncios del marco: Chanel, Hermès y Louis Vuitton en el archivo de 2021. Los bloques son fijos (las tres marcas que hay), no una muestra de marcas, así que el efecto no se extiende a otras marcas ni al mercado actual.
+
+**Cómo entra el diseño muestral en el análisis del experimento.**
+
+- **Los estratos de la muestra concreta son los bloques del experimento.** La marca, que en la Parte A separaba el precio, en la Parte B se controla como bloque.
+- **Cada corrida estima con el estimador correcto para su diseño:** la media simple en el aleatorio simple, y en el estratificado la media ponderada por $N_h/N$, con los mismos pesos que en la Parte A.
+- **La ANOVA del experimento no lleva pesos.** Sus unidades son corridas, no anuncios. Cada corrida es una repetición igual de importante del procedimiento, y no representa a una parte distinta de la población.
+
+**Cuánto del error es muestral y cuánto experimental.**
+
+- **En la muestra concreta** todo el error es muestral: el error estándar del precio medio es de £`r f0(SE(e_precio))`.
+- **En el experimento** la respuesta *es* el error muestral, y lo que la ANOVA llama «error experimental» es cuánto varía ese error de una muestra a otra con el mismo diseño. Con la respuesta original, el bloque explica el `r pc(tab["bloque", "Sum Sq"] / sum(tab[, "Sum Sq"]))` de la variación del error, el tamaño el `r pc(tab["tamano", "Sum Sq"] / sum(tab[, "Sum Sq"]))`, el diseño el `r pc(tab["diseno", "Sum Sq"] / sum(tab[, "Sum Sq"]))` y la interacción el `r pc(tab["diseno:tamano", "Sum Sq"] / sum(tab[, "Sum Sq"]))`. El resto, `r pc(tab["Residuals", "Sum Sq"] / sum(tab[, "Sum Sq"]))`, es puro azar de muestreo.
+
+Es decir, la mayor parte de la variación del error no depende de ninguna decisión de diseño. Es la suerte de la muestra que toca. Por eso hace falta reportar siempre el intervalo, y no solo la estimación.
+
+# Limitaciones
+
+- **Qué no se puede concluir.** Las estimaciones valen para el marco: los anuncios de estas tres marcas que recogió el archivo de 2021. No describen el mercado actual, otras plataformas ni otras marcas. Tampoco dicen por qué un bolso vale más. Este estudio describe; no establece causas.
+- **Cobertura.** Si los 608 anuncios sin marca y los que el scraping no recogió son más baratos que el promedio, el precio medio de la población objetivo es menor que nuestra estimación. No sabemos cuánto.
+- **No respuesta.** Solo afecta a la razón y solo en Louis Vuitton (2 de 27). El ajuste supone que faltar el precio en tienda no depende de la razón. Si esos bolsos son modelos descontinuados o raros, que suelen conservar más valor, la razón de Louis Vuitton estaría algo subestimada.
+- **Intervalos con cobertura menor a la nominal.** En las marcas con precios muy asimétricos, y sobre todo en Louis Vuitton, el intervalo al 95 % cubre bastante menos. Una muestra más grande en ese estrato, un intervalo para la media del logaritmo del precio o un intervalo bootstrap serían mejores opciones. Las presentamos como sugerencias, no como parte del análisis planeado.
+- **El piloto.** Subestimó la variabilidad, así que el tamaño quedó corto para el margen de £250 que se buscaba. El margen obtenido para el precio medio fue de £`r f0(z * SE(e_precio))`.
+- **El experimento.** Los efectos valen para estas tres poblaciones y para tamaños entre 30 y 90. El factor de diseño comparó un solo esquema de estratificación (por estado, con asignación proporcional). Que este rinda poco no dice nada de estratificar por otra variable, como el modelo del bolso.
+
+
+# Desviaciones del plan
+
+| N.º | El plan decía | Qué pasó | Efecto en el análisis |
+|---|---|---|---|
+| 1 | Muestreo: protocolo el 30 de octubre, avance el 6 de noviembre y campo el 13 de noviembre. | Las releases `protocolo`, `Avance` y `Campo` se publicaron el 14 de noviembre y apuntan al mismo commit. | Ninguno en el diseño. Lo respalda que el diseño y la semilla ya estaban en `protocolo.md` y `R/seleccion.R`. |
+| 2 | La semilla de la selección la publicaba el docente. | No hubo semilla publicada. Se usó la 20261113, escrita en el protocolo, y se corrió una sola vez. | Ninguno: las probabilidades de inclusión son las del protocolo. |
+| 3 | `datos/muestra.csv` y `datos/datos.csv` en el repositorio desde el avance. | Se suben con el informe. | Ninguno: los guiones los reproducen exactamente. |
+| 4 | Modalidad conjunta: inscripción el 23 de octubre y preregistro conjunto el 30 de octubre. | El docente autorizó unir los proyectos el 23 de noviembre. El preregistro conjunto se publicó ese día, antes de correr el experimento y después de seleccionar la muestra concreta. | La muestra concreta no depende del experimento. El experimento sí se diseñó conociendo los resultados de la Parte A, pero no los suyos: su tabla de corridas, el modelo y la regla de transformación están en el preregistro. |
+
+# Análisis exploratorio
+
+*Esta sección no estaba en el plan del protocolo: es exploratoria.*
+
+```{r exploratorio, fig.width = 8, fig.height = 3.6}
+par(mfrow = c(1, 2), mar = c(4, 7, 2, 1))
+boxplot(log10(precio) ~ estrato, data = d, horizontal = TRUE, las = 1,
+        names = nombres[estratos], xlab = "log10 del precio de reventa (£)",
+        main = "Muestra", col = "#cfe0f5")
+boxplot(log10(precio) ~ estrato, data = archivo, horizontal = TRUE, las = 1,
+        names = nombres[estratos], xlab = "log10 del precio de reventa (£)",
+        main = "Marco completo", col = "#f5dccf", outcex = 0.3)
+```
+
+La muestra reproduce bien el centro de cada marca, pero en Louis Vuitton no capta la cola de bolsos caros que sí tiene el marco. Eso explica lo que se vio en la comprobación contra el valor real.
+
+# Declaración de uso de IA
+
+Usamos **Claude** (Anthropic), un asistente conversacional, para:
+
+- buscar una base pública que se pudiera submuestrear;
+- escribir los guiones de R (marco, piloto, selección, comprobación, datos, tabla de corridas, experimento y estimación);
+- hacer un piloto en simulación del experimento, que mostró residuos asimétricos y llevó a preregistrar la regla de Box-Cox;
+- redactar el protocolo, el preregistro y este informe.
+
+Lo que verificamos o corregimos nosotras:
+
+1. **Las probabilidades de inclusión, anuncio por anuncio,** con `R/comprobacion.R` (ver «Probabilidades de inclusión, selección y comprobación»). Revisamos que la varianza use los estratos y la corrección por población finita, y no la de un aleatorio simple.
+2. **Las estimaciones por dos vías,** con `survey` y con la fórmula.
+3. **Que el modelo del experimento lleve el bloque como factor y que las réplicas sean muestras nuevas,** no submuestras. Es el error que la guía de Diseño advierte en los asistentes.
+4. **Que la muestra de `datos/muestra.csv` sea la que escribe el guion** con la semilla 20261113: coincide con lo reportado en el avance.
+5. **Las referencias bibliográficas,** en su fuente.
+
+# Referencias
+
+- Ketevana. (2021). *Data-Science-Capstone-Project* [repositorio de GitHub]. https://github.com/Ketevana/Data-Science-Capstone-Project
+- Lohr, S. L. (2021). *Sampling: Design and analysis* (3.ª ed.). Chapman and Hall/CRC.
+- Lumley, T. (2004). Analysis of complex survey samples. *Journal of Statistical Software, 9*(8), 1–19. https://doi.org/10.18637/jss.v009.i08
+- Montgomery, D. C. (2019). *Design and analysis of experiments* (10.ª ed.). Wiley.
+
+# Anexos
+
+**Tabla de corridas del experimento.** Primeras 15 de las 240. El archivo completo está en `datos/tabla-corridas.csv` y los resultados de cada corrida en `datos/experimento.csv`.
+
+```{r anexo-tabla}
+knitr::kable(head(read.csv("datos/tabla-corridas.csv"), 15), row.names = FALSE)
+```
+
+**Bitácora.** Está en `datos/bitacora.md`.
