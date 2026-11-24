@@ -1,38 +1,36 @@
-# Precio de reventa de bolsos de lujo: muestreo estratificado
+Modalidad conjunta: Diseño de Experimentos + Muestreo
 
-Proyecto integrador, Corte III, Muestreo Estadístico, Universidad El Bosque.
-Karol Ximena Salcedo Ponguta y Mariana Lizarazo Buitrago.
+# Bolsos de lujo de segunda mano: una muestra estratificada y un experimento sobre el diseño muestral
 
-**Qué se estima:**
-- el precio medio de reventa;
-- la proporción de anuncios agotados;
-- la razón media entre el precio de reventa y el precio en tienda.
+Proyecto del Corte III. Universidad El Bosque.
+Karol Ximena Salcedo Ponguta y Mariana Lizarazo Buitrago. Las dos cursan ambas materias.
 
-Las tres se estiman en total y por marca.
+**Población:** los anuncios de bolsos de Louis Vuitton, Chanel y Hermès en Vestiaire Collective, según el archivo público de 2021. El marco es ese archivo, con 11.988 anuncios.
 
-**Población:** los anuncios de bolsos de segunda mano de Louis Vuitton, Chanel y Hermès en Vestiaire Collective que recoge el archivo público de anuncios (mayo de 2021).
+**Muestreo:** una muestra estratificada por marca de 150 anuncios. Con ella se estiman el precio medio de reventa, la proporción de anuncios agotados y la razón entre el precio de reventa y el precio en tienda.
 
-**Diseño:** estratificado por marca, aleatorio simple sin reemplazo dentro de cada estrato y asignación de Neyman. Son 150 anuncios: 34 de Chanel, 89 de Hermès y 27 de Louis Vuitton.
+**Diseño (Forma B):** un experimento computacional, factorial 2 × 2 en bloques: diseño muestral (aleatorio simple / estratificado por estado) × tamaño (30 / 90). Cada marca es un bloque y hay 240 corridas. La respuesta es el error relativo de la estimación del precio medio.
+
+**El informe:** `informe.html`. Se lee en el navegador sin instalar nada.
 
 ## Carpetas
 
-- `datos/fuente/`: archivo original, sin modificar
-- `datos/marco.csv`: marco, con un identificador y el estrato de cada anuncio
-- `datos/archivo-limpio.csv`: variables de estudio de cada anuncio del marco
-- `datos/piloto.csv`: piloto de 10 anuncios por estrato
-- `datos/muestra.csv`: muestra seleccionada, con su probabilidad de inclusión y su peso
-- `datos/datos.csv`: datos de las unidades seleccionadas, con la columna `respondio`
-- `datos/bitacora.md`: bitácora
-- `R/`: guiones
-- `figuras/`: gráficos
+| Archivo o carpeta | Qué es |
+|---|---|
+| `ficha.md`, `protocolo.md`, `avance.md` | Ficha, protocolo y avance de la parte de Muestreo |
+| `preregistro.md` | Preregistro conjunto |
+| `informe.Rmd`, `informe.html` | Informe y su versión renderizada |
+| `datos/fuente/` | Archivo original, sin modificar |
+| `datos/marco.csv`, `datos/archivo-limpio.csv` | Marco y variables de cada anuncio |
+| `datos/piloto.csv`, `datos/muestra.csv`, `datos/datos.csv` | Piloto, muestra y datos de la muestra |
+| `datos/tabla-corridas.csv`, `datos/experimento.csv` | Tabla de corridas y datos crudos del experimento |
+| `datos/bitacora.md` | Bitácora |
+| `R/` | Guiones |
+| `figuras/` | Gráficos del avance |
 
 ## Cómo reproducirlo
 
-Abrir el `.Rproj` en RStudio, instalar `survey` y correr en orden:
-
-1. `R/00-marco.R`
-2. `R/piloto.R`
-3. `R/seleccion.R`, con la semilla publicada por el docente
-4. `R/comprobacion.R`
-5. `R/datos.R`
-6. `R/estimacion.R`
+1. Clonar el repositorio y abrir `Muestreo_Lizarazo_Salcedo.Rproj` en RStudio.
+2. Instalar los paquetes una vez: `install.packages(c("survey", "rmarkdown", "knitr"))`. MASS viene con R.
+3. En un R recién abierto, correr en orden: `R/00-marco.R`, `R/piloto.R`, `R/seleccion.R`, `R/comprobacion.R`, `R/datos.R`, `R/tabla-corridas.R` y `R/experimento.R`. Los archivos de `datos/` que generan son idénticos a los del repositorio.
+4. Abrir `informe.Rmd` y pulsar **Knit**. Tarda uno o dos minutos y produce `informe.html`.
